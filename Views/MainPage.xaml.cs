@@ -36,6 +36,8 @@ public sealed partial class MainPage : Page
     private readonly OscChatService _oscChatService = new();
     private readonly TranslatorService _translatorService = new();
     private readonly SpeechInputService _speechInputService = new();
+    private CancellationTokenSource? _senseVoiceDownloadCts;
+    private int _senseVoiceSelectionVersion;
     private readonly GptSovitsService _gptSovitsService = new();
     private readonly QrCodeService _qrCodeService = new();
     private readonly MobileControlService _mobileControlService = new();
@@ -1449,7 +1451,7 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private async Task StopSpeechInputAsync()
+    private async Task StopSpeechInputAsync(bool discardFinal = false)
     {
         await _speechStateGate.WaitAsync();
         try
@@ -1459,11 +1461,11 @@ public sealed partial class MainPage : Page
                 return;
             }
 
-            await _speechInputService.StopAsync();
+            await _speechInputService.StopAsync(discardFinal);
             _isSpeechRunning = false;
-            lock (_speechAutoSendQueue)
+            if (discardFinal)
             {
-                _speechAutoSendQueue.Clear();
+                lock (_speechAutoSendQueue) _speechAutoSendQueue.Clear();
             }
             if (_config.SpeechInput.CueEnabled)
             {
@@ -1638,9 +1640,37 @@ public sealed partial class MainPage : Page
         }
     }
 
+    private async void BrowseSenseVoiceModelButton_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = await PickFolderAsync();
+        if (folder is not null) SenseVoiceModelPathBox.Text = folder.Path;
+    }
+
+    private void SenseVoiceModelPathBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_isLoaded) return;
+        _senseVoiceDownloadCts?.Cancel();
+        _senseVoiceSelectionVersion++;
+        if (_isSpeechRunning) _ = StopSpeechInputAsync(discardFinal: true);
+        SyncConfigFromUi();
+        _configService.Save(_config);
+        RefreshSenseVoiceStatus();
+    }
+
     private void SpeechEngineCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSpeechEngineUiState();
+        if (_isLoaded)
+        {
+            _senseVoiceDownloadCts?.Cancel();
+            _senseVoiceSelectionVersion++;
+            if (_isSpeechRunning) _ = StopSpeechInputAsync(discardFinal: true);
+            SyncConfigFromUi();
+            _configService.Save(_config);
+            if (GetComboValue(SpeechEngineCombo, "Sherpa-ONNX") == "SenseVoice-Small" &&
+                string.IsNullOrWhiteSpace(SenseVoiceModelPathBox.Text) && !SenseVoiceModelService.IsInstalled)
+                _ = DownloadSenseVoiceAsync();
+        }
         _ = PreloadSpeechEngineFromUiAsync();
     }
 
@@ -1656,6 +1686,7 @@ public sealed partial class MainPage : Page
         var isVosk = string.Equals(engine, "Vosk", StringComparison.OrdinalIgnoreCase);
         var isSherpa = string.Equals(engine, "Sherpa-ONNX", StringComparison.OrdinalIgnoreCase);
         var isOnnxEngine = isSherpa;
+        var isSenseVoice = engine == "SenseVoice-Small";
 
         VoskModelPathBox.IsEnabled = isVosk;
         BrowseVoskModelButton.IsEnabled = isVosk;
@@ -1666,6 +1697,8 @@ public sealed partial class MainPage : Page
         SherpaModelPathBox.IsEnabled = isSherpa;
         BrowseSherpaModelButton.IsEnabled = isSherpa;
         SherpaProviderCombo.IsEnabled = isOnnxEngine;
+        SenseVoiceModelRow.Visibility = isSenseVoice ? Visibility.Visible : Visibility.Collapsed;
+        if (isSenseVoice) RefreshSenseVoiceStatus();
 
         UpdateSpeechTriggerModeUiState();
         UpdateVoiceToggleButtonContent();
@@ -1692,7 +1725,95 @@ public sealed partial class MainPage : Page
     {
         return string.Equals(engine, "Windows", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(engine, "Vosk", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(engine, "Sherpa-ONNX", StringComparison.OrdinalIgnoreCase);
+               string.Equals(engine, "Sherpa-ONNX", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(engine, "SenseVoice-Small", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RefreshSenseVoiceStatus()
+    {
+        if (SenseVoiceModelPathBox is null || SenseVoiceModelStatus is null) return;
+        var custom = SenseVoiceModelPathBox.Text.Trim();
+        if (!string.IsNullOrEmpty(custom))
+        {
+            var model = File.Exists(Path.Combine(custom, "model.int8.onnx")) || File.Exists(Path.Combine(custom, "model.onnx"));
+            var tokens = File.Exists(Path.Combine(custom, "tokens.txt"));
+            SenseVoiceModelStatus.Text = model && tokens
+                ? "SenseVoice-Small：使用所选目录；缺少 Silero VAD 时会自动下载辅助文件"
+                : "所选目录缺少 model.int8.onnx（或 model.onnx）和 tokens.txt；tokens.json 不能直接使用";
+            SenseVoiceDownloadButton.IsEnabled = false;
+            SenseVoiceDeleteButton.IsEnabled = false;
+            return;
+        }
+        var bytes = SenseVoiceModelService.InstalledBytes;
+        SenseVoiceModelStatus.Text = SenseVoiceModelService.IsInstalled
+            ? $"SenseVoice-Small：已下载（{bytes / 1048576d:F1} MB），可开始识别"
+            : $"SenseVoice-Small：未下载（已有 {bytes / 1048576d:F1} MB，完整模型约 230 MB）";
+        SenseVoiceDeleteButton.IsEnabled = bytes > 0 && _senseVoiceDownloadCts is null;
+        SenseVoiceDownloadButton.IsEnabled = !SenseVoiceModelService.IsInstalled && _senseVoiceDownloadCts is null;
+    }
+
+    private async void SenseVoiceDownloadButton_Click(object sender, RoutedEventArgs e) => await DownloadSenseVoiceAsync();
+
+    private void SenseVoiceCancelButton_Click(object sender, RoutedEventArgs e) => _senseVoiceDownloadCts?.Cancel();
+
+    private async Task DownloadSenseVoiceAsync()
+    {
+        if (_senseVoiceDownloadCts is not null || SenseVoiceModelService.IsInstalled) return;
+        var cts = new CancellationTokenSource();
+        _senseVoiceDownloadCts = cts;
+        var version = _senseVoiceSelectionVersion;
+        SenseVoiceDownloadProgress.Visibility = Visibility.Visible;
+        SenseVoiceDownloadButton.IsEnabled = false;
+        SenseVoiceCancelButton.IsEnabled = true;
+        SenseVoiceDeleteButton.IsEnabled = false;
+        var progress = new Progress<string>(message =>
+        {
+            if (version == _senseVoiceSelectionVersion) SenseVoiceModelStatus.Text = message;
+        });
+        try
+        {
+            await SenseVoiceModelService.EnsureDownloadedAsync(progress, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (version == _senseVoiceSelectionVersion)
+                SenseVoiceModelStatus.Text = "SenseVoice-Small：下载已取消，可重试";
+        }
+        catch (Exception ex)
+        {
+            if (version == _senseVoiceSelectionVersion)
+                SenseVoiceModelStatus.Text = $"SenseVoice-Small 下载失败：{ex.Message}";
+            RuntimeLogService.Error("SenseVoice download failed.", ex);
+        }
+        finally
+        {
+            if (ReferenceEquals(_senseVoiceDownloadCts, cts)) _senseVoiceDownloadCts = null;
+            cts.Dispose();
+            SenseVoiceDownloadProgress.Visibility = Visibility.Collapsed;
+            SenseVoiceCancelButton.IsEnabled = false;
+            if (version != _senseVoiceSelectionVersion || SenseVoiceModelService.IsInstalled) RefreshSenseVoiceStatus();
+            else
+            {
+                SenseVoiceDownloadButton.IsEnabled = true;
+                SenseVoiceDeleteButton.IsEnabled = SenseVoiceModelService.InstalledBytes > 0;
+            }
+        }
+    }
+
+    private async void SenseVoiceDeleteButton_Click(object sender, RoutedEventArgs e)
+    {
+        SenseVoiceDeleteButton.IsEnabled = false;
+        SenseVoiceModelStatus.Text = "SenseVoice-Small：正在删除...";
+        try
+        {
+            if (_isSpeechRunning) await StopSpeechInputAsync(discardFinal: true);
+            await SenseVoiceModelService.DeleteAsync();
+            RefreshSenseVoiceStatus();
+        }
+        catch (Exception ex)
+        {
+            SenseVoiceModelStatus.Text = $"SenseVoice-Small 删除失败：{ex.Message}";
+        }
     }
 
     private async Task PreloadSpeechEngineFromUiAsync()
@@ -1709,6 +1830,8 @@ public sealed partial class MainPage : Page
             MicrophoneDeviceId = SpeechMicCombo.SelectedValue?.ToString() ?? _config.SpeechInput.MicrophoneDeviceId,
             VoskModelPath = VoskModelPathBox.Text.Trim(),
             SherpaModelPath = NormalizeSherpaModelPathForSave(SherpaModelPathBox.Text),
+            SenseVoiceModelPath = SenseVoiceModelPathBox.Text.Trim(),
+            SenseVoiceSensitivity = GetComboTagValue(SenseVoiceSensitivityCombo, "auto"),
             SherpaProvider = GetComboValue(SherpaProviderCombo, "cpu"),
             SherpaNumThreads = _config.SpeechInput.SherpaNumThreads,
             SherpaDecodingMethod = _config.SpeechInput.SherpaDecodingMethod,
@@ -2639,6 +2762,9 @@ public sealed partial class MainPage : Page
         UpdateSpeechEngineUiState();
         VoskModelPathBox.Text = _config.SpeechInput.VoskModelPath;
         SherpaModelPathBox.Text = GetDisplaySherpaModelPath();
+        SenseVoiceModelPathBox.Text = _config.SpeechInput.SenseVoiceModelPath;
+        SetComboTagValue(SenseVoiceSensitivityCombo, _config.SpeechInput.SenseVoiceSensitivity, "auto");
+        if (_config.SpeechInput.Engine == "SenseVoice-Small") RefreshSenseVoiceStatus();
         SetComboValue(SherpaProviderCombo, _config.SpeechInput.SherpaProvider, "cpu");
         _isUpdatingAutoSendSwitch = true;
         AutoSendSwitch.IsOn = _config.SpeechInput.AutoSend;
@@ -2726,6 +2852,8 @@ public sealed partial class MainPage : Page
         _config.SpeechInput.TriggerMode = GetCurrentSpeechTriggerMode();
         _config.SpeechInput.VoskModelPath = VoskModelPathBox.Text.Trim();
         _config.SpeechInput.SherpaModelPath = NormalizeSherpaModelPathForSave(SherpaModelPathBox.Text);
+        _config.SpeechInput.SenseVoiceModelPath = SenseVoiceModelPathBox.Text.Trim();
+        _config.SpeechInput.SenseVoiceSensitivity = GetComboTagValue(SenseVoiceSensitivityCombo, "auto");
         _config.SpeechInput.SherpaProvider = GetComboValue(SherpaProviderCombo, "cpu");
         _config.SpeechInput.AutoSend = AutoSendSwitch.IsOn;
         _config.SpeechInput.CueEnabled = SpeechCueSwitch.IsOn;
@@ -3177,6 +3305,8 @@ public sealed partial class MainPage : Page
 
     private static string GetComboValue(ComboBox comboBox, string fallback)
     {
+        if (comboBox.SelectedItem is ComboBoxItem tagged && tagged.Tag is string id)
+            return id;
         return comboBox.SelectedItem?.ToString() ?? fallback;
     }
 
@@ -3185,7 +3315,8 @@ public sealed partial class MainPage : Page
         value ??= fallback;
         foreach (var item in comboBox.Items)
         {
-            if (string.Equals(item?.ToString(), value, StringComparison.OrdinalIgnoreCase))
+            var id = item is ComboBoxItem tagged ? tagged.Tag?.ToString() : item?.ToString();
+            if (string.Equals(id, value, StringComparison.OrdinalIgnoreCase))
             {
                 comboBox.SelectedItem = item;
                 return;
@@ -3194,7 +3325,8 @@ public sealed partial class MainPage : Page
 
         foreach (var item in comboBox.Items)
         {
-            if (string.Equals(item?.ToString(), fallback, StringComparison.OrdinalIgnoreCase))
+            var id = item is ComboBoxItem tagged ? tagged.Tag?.ToString() : item?.ToString();
+            if (string.Equals(id, fallback, StringComparison.OrdinalIgnoreCase))
             {
                 comboBox.SelectedItem = item;
                 return;

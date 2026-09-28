@@ -26,6 +26,7 @@ public sealed class SpeechInputService : IDisposable
     private int _sherpaLoadedNumThreads = 1;
     private string _sherpaLoadedDecoding = "greedy_search";
     private bool _captureSuppressed;
+    private SenseVoiceSession? _senseVoiceSession;
 
     private WaveInEvent? _waveIn;
     private SpeechRecognitionEngine? _windowsEngine;
@@ -40,7 +41,7 @@ public sealed class SpeechInputService : IDisposable
         {
             lock (_lock)
             {
-                return _waveIn is not null || _windowsEngine is not null;
+                return _waveIn is not null || _windowsEngine is not null || _senseVoiceSession is not null;
             }
         }
     }
@@ -59,6 +60,8 @@ public sealed class SpeechInputService : IDisposable
             MicrophoneDeviceId = config.MicrophoneDeviceId,
             VoskModelPath = config.VoskModelPath,
             SherpaModelPath = config.SherpaModelPath,
+            SenseVoiceModelPath = config.SenseVoiceModelPath,
+            SenseVoiceSensitivity = config.SenseVoiceSensitivity,
             SherpaProvider = config.SherpaProvider,
             SherpaNumThreads = config.SherpaNumThreads,
             SherpaDecodingMethod = config.SherpaDecodingMethod,
@@ -91,6 +94,32 @@ public sealed class SpeechInputService : IDisposable
             return;
         }
 
+        if (engine == "SenseVoice-Small")
+        {
+            var customDirectory = config.SenseVoiceModelPath?.Trim();
+            if (string.IsNullOrEmpty(customDirectory) && !SenseVoiceModelService.IsInstalled)
+                throw new InvalidOperationException("SenseVoice-Small 尚未下载完成。请在语音识别设置中下载模型。");
+            if (!string.IsNullOrEmpty(customDirectory) && !File.Exists(Path.Combine(customDirectory, "silero_vad.onnx")))
+                await SenseVoiceModelService.EnsureVadDownloadedAsync();
+            var files = SenseVoiceModelService.ResolveFiles(customDirectory);
+            SenseVoiceSession session;
+            lock (_lock)
+            {
+                if (IsRunning) throw new InvalidOperationException("语音输入已经运行。");
+                session = new SenseVoiceSession(ResolveWaveInputDeviceNumber(config.MicrophoneDeviceId),
+                    files.Model, files.Tokens, files.Vad, config.SenseVoiceSensitivity,
+                    text => TextRecognized?.Invoke(this, text));
+                _senseVoiceSession = session;
+            }
+            try { await session.StartAsync(); }
+            catch
+            {
+                lock (_lock) { if (ReferenceEquals(_senseVoiceSession, session)) _senseVoiceSession = null; }
+                throw;
+            }
+            return;
+        }
+
         if (string.Equals(engine, "Vosk", StringComparison.OrdinalIgnoreCase))
         {
             StartVosk(config);
@@ -111,8 +140,19 @@ public sealed class SpeechInputService : IDisposable
         StopAsync().GetAwaiter().GetResult();
     }
 
-    public Task StopAsync()
+    public async Task StopAsync(bool discardSenseVoiceResult = false)
     {
+        SenseVoiceSession? senseVoice;
+        lock (_lock)
+        {
+            senseVoice = _senseVoiceSession;
+            _senseVoiceSession = null;
+        }
+        if (senseVoice is not null)
+        {
+            if (discardSenseVoiceResult) senseVoice.DiscardOutput();
+            await senseVoice.StopAsync();
+        }
         SpeechRecognitionEngine? windowsEngine;
         PcmBufferedReadStream? windowsAudioStream;
         var shouldStopWindowsRecognition = false;
@@ -173,7 +213,6 @@ public sealed class SpeechInputService : IDisposable
             RuntimeLogService.Info("Speech input stopped.");
         }
 
-        return Task.CompletedTask;
     }
 
     private void WaveIn_DataAvailable(object? sender, WaveInEventArgs e)
@@ -438,6 +477,7 @@ public sealed class SpeechInputService : IDisposable
             }
 
             _captureSuppressed = suppressed;
+            _senseVoiceSession?.SetSuppressed(suppressed);
             changed = true;
 
             if (suppressed)
@@ -721,6 +761,7 @@ public sealed class SpeechInputService : IDisposable
 
     private static string NormalizeEngine(string? engine)
     {
+        if (string.Equals(engine, "SenseVoice-Small", StringComparison.OrdinalIgnoreCase)) return "SenseVoice-Small";
         if (string.Equals(engine, "Vosk", StringComparison.OrdinalIgnoreCase))
         {
             return "Vosk";

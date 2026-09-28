@@ -149,6 +149,9 @@ public sealed class ConfigService
         config.SpeechInput.MicrophoneDeviceId = NormalizeSpeechMicrophone(config.SpeechInput.MicrophoneDeviceId);
         config.SpeechInput.VoskModelPath = (config.SpeechInput.VoskModelPath ?? string.Empty).Trim();
         config.SpeechInput.SherpaModelPath = (config.SpeechInput.SherpaModelPath ?? string.Empty).Trim();
+        config.SpeechInput.SenseVoiceModelPath = (config.SpeechInput.SenseVoiceModelPath ?? string.Empty).Trim();
+        config.SpeechInput.SenseVoiceSensitivity = string.Equals(config.SpeechInput.SenseVoiceSensitivity, "strict", StringComparison.OrdinalIgnoreCase)
+            ? "strict" : "auto";
         config.SpeechInput.SherpaProvider = NormalizeSherpaProvider(config.SpeechInput.SherpaProvider);
         config.SpeechInput.SherpaNumThreads = Math.Clamp(config.SpeechInput.SherpaNumThreads, 1, 16);
         config.SpeechInput.SherpaDecodingMethod = NormalizeSherpaDecoding(config.SpeechInput.SherpaDecodingMethod);
@@ -226,6 +229,7 @@ public sealed class ConfigService
     private static string NormalizeSpeechEngine(string? engine)
     {
         var e = (engine ?? string.Empty).Trim();
+        if (string.Equals(e, "SenseVoice-Small", StringComparison.OrdinalIgnoreCase)) return "SenseVoice-Small";
         if (string.Equals(e, "Vosk", StringComparison.OrdinalIgnoreCase))
         {
             return "Vosk";

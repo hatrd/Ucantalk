@@ -7,6 +7,8 @@ public sealed class SpeechInputConfig
     public string MicrophoneDeviceId { get; set; } = "default";
     public string VoskModelPath { get; set; } = string.Empty;
     public string SherpaModelPath { get; set; } = string.Empty;
+    public string SenseVoiceModelPath { get; set; } = string.Empty;
+    public string SenseVoiceSensitivity { get; set; } = "auto";
     public string SherpaProvider { get; set; } = "cpu";
     public int SherpaNumThreads { get; set; } = 1;
     public string SherpaDecodingMethod { get; set; } = "greedy_search";

@@ -664,10 +664,11 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <ComboBox x:Name="SpeechEngineCombo" Header="语音识别引擎" Grid.Column="0" SelectionChanged="SpeechEngineCombo_SelectionChanged">
+                                        <ComboBox x:Name="SpeechEngineCombo" Header="语音识别方案" Grid.Column="0" SelectionChanged="SpeechEngineCombo_SelectionChanged">
                                             <x:String>Windows</x:String>
                                             <x:String>Vosk</x:String>
-                                            <x:String>Sherpa-ONNX</x:String>
+                                            <ComboBoxItem Tag="Sherpa-ONNX" Content="Sherpa-ONNX 流式（默认 Zipformer / 可选目录）"/>
+                                            <x:String>SenseVoice-Small</x:String>
                                         </ComboBox>
                                         <Button x:Name="BrowseVoskModelButton" Grid.Column="1" VerticalAlignment="Bottom" Content="选择 Vosk 模型目录" Click="BrowseVoskModelButton_Click"/>
                                     </Grid>
@@ -690,6 +691,27 @@
                                         <x:String>dml</x:String>
                                         <x:String>cuda</x:String>
                                     </ComboBox>
+                                    <StackPanel x:Name="SenseVoiceModelRow" Spacing="8" Visibility="Collapsed">
+                                        <ComboBox x:Name="SenseVoiceSensitivityCombo" Header="SenseVoice 噪声过滤（下次启动识别时生效）">
+                                            <ComboBoxItem Tag="auto" Content="自动（推荐，随背景噪声调整）"/>
+                                            <ComboBoxItem Tag="strict" Content="更严格（仍有误识别时使用）"/>
+                                        </ComboBox>
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="SenseVoiceModelPathBox" Grid.Column="0" Header="SenseVoice 模型目录（留空使用自动下载）" TextChanged="SenseVoiceModelPathBox_TextChanged"/>
+                                            <Button x:Name="BrowseSenseVoiceModelButton" Grid.Column="1" VerticalAlignment="Bottom" Content="选择 SenseVoice 模型目录" Click="BrowseSenseVoiceModelButton_Click"/>
+                                        </Grid>
+                                        <TextBlock x:Name="SenseVoiceModelStatus" Text="SenseVoice-Small：未下载（约 230 MB）" TextWrapping="Wrap"/>
+                                        <ProgressBar x:Name="SenseVoiceDownloadProgress" IsIndeterminate="True" Visibility="Collapsed"/>
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button x:Name="SenseVoiceDownloadButton" Content="下载 / 重试" Click="SenseVoiceDownloadButton_Click"/>
+                                            <Button x:Name="SenseVoiceCancelButton" Content="取消下载" Click="SenseVoiceCancelButton_Click" IsEnabled="False"/>
+                                            <Button x:Name="SenseVoiceDeleteButton" Content="删除模型" Click="SenseVoiceDeleteButton_Click"/>
+                                        </StackPanel>
+                                    </StackPanel>
                                     <ToggleSwitch x:Name="SpeechAutoSendSwitch" Header="识别后自动发送" Toggled="AutoSendSwitch_Toggled"/>
                                     <ToggleSwitch x:Name="SpeechCueSwitch" Header="语音提示音（开始/结束/发送）"/>
                                     <ToggleSwitch x:Name="CaptureDuringTtsSwitch" Header="并行模式：TTS 播放时继续采集"/>
