@@ -25,7 +25,7 @@ internal sealed class SenseVoiceSegmentGate
     public bool ShouldDecode(ReadOnlySpan<float> samples)
     {
         if (samples.IsEmpty) return false;
-        var minimum = _strict ? 0.012 : 0.006;
+        var minimum = _strict ? 0.012 : 0.0035;
         var ratio = _strict ? 5 : 4;
         var requiredRms = Math.Max(minimum, Math.Min(0.04, _backgroundRms * ratio));
         return GetRms(samples) >= requiredRms;

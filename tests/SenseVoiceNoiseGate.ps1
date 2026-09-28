@@ -41,6 +41,12 @@ public static class GateChecks
         var borderline = Tone(0.01, 16000);
         return auto.ShouldDecode(borderline) && !strict.ShouldDecode(borderline);
     }
+
+    public static bool KeepsQuietSpeech()
+    {
+        var auto = new VRC_cantalkcn.Services.SenseVoiceSegmentGate("auto");
+        return auto.ShouldDecode(Tone(0.0054, 16000));
+    }
 }
 '@
 Add-Type -TypeDefinition $source
@@ -48,4 +54,5 @@ if (-not [GateChecks]::RejectsLowNoise()) { throw 'Low-level noise would be deco
 if (-not [GateChecks]::AcceptsSpeechLevelSignal()) { throw 'Speech-level signal was rejected.' }
 if (-not [GateChecks]::AdaptsToRaisedBackground()) { throw 'Automatic gate did not adapt to background noise.' }
 if (-not [GateChecks]::StrictIsMoreSelective()) { throw 'Strict sensitivity is not more selective.' }
+if (-not [GateChecks]::KeepsQuietSpeech()) { throw 'Quiet speech would be dropped as noise.' }
 Write-Output 'SenseVoice noise gate checks passed.'

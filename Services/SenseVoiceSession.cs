@@ -103,21 +103,23 @@ internal sealed class SenseVoiceSession
             vadConfig.SileroVad.MaxSpeechDuration = 20;
             using var vad = new VoiceActivityDetector(vadConfig, 60);
             var gate = new SenseVoiceSegmentGate(_sensitivity);
+            var history = new SenseVoiceAudioHistory();
             _ready.TrySetResult();
             // Silero accepts fixed 512-sample windows; retain the remainder between callbacks.
             var pending = new List<float>();
             await foreach (var samples in _audio.Reader.ReadAllAsync())
             {
-                if (samples.Length == 0) { vad.Reset(); pending.Clear(); continue; }
+                if (samples.Length == 0) { vad.Reset(); pending.Clear(); history.Reset(); continue; }
                 pending.AddRange(samples);
                 var consumed = 0;
                 while (pending.Count - consumed >= 512)
                 {
                     var frame = pending.GetRange(consumed, 512).ToArray();
+                    history.Append(frame);
                     vad.AcceptWaveform(frame);
                     if (!vad.IsSpeechDetected()) gate.ObserveBackground(frame);
                     consumed += 512;
-                    DecodeSegments(vad, recognizer, gate);
+                    DecodeSegments(vad, recognizer, gate, history);
                 }
                 pending.RemoveRange(0, consumed);
             }
@@ -125,11 +127,12 @@ internal sealed class SenseVoiceSession
             {
                 var tail = new float[512];
                 pending.CopyTo(tail);
+                history.Append(tail);
                 vad.AcceptWaveform(tail);
                 if (!vad.IsSpeechDetected()) gate.ObserveBackground(tail);
             }
             vad.Flush();
-            DecodeSegments(vad, recognizer, gate);
+            DecodeSegments(vad, recognizer, gate, history);
         }
         catch (Exception ex)
         {
@@ -139,16 +142,19 @@ internal sealed class SenseVoiceSession
         }
     }
 
-    private void DecodeSegments(VoiceActivityDetector vad, OfflineRecognizer recognizer, SenseVoiceSegmentGate gate)
+    private void DecodeSegments(VoiceActivityDetector vad, OfflineRecognizer recognizer,
+        SenseVoiceSegmentGate gate, SenseVoiceAudioHistory history)
     {
         while (!vad.IsEmpty())
         {
-            var samples = vad.Front().Samples;
+            var segment = vad.Front();
+            var samples = segment.Samples;
+            var audio = history.WithPreRoll(segment.Start, samples);
             vad.Pop();
             if (!gate.ShouldDecode(samples)) continue;
 
             using var stream = recognizer.CreateStream();
-            stream.AcceptWaveform(16000, samples);
+            stream.AcceptWaveform(16000, audio);
             recognizer.Decode(stream);
             var text = Regex.Replace(stream.Result.Text, @"<\|[^|]*\|>", "").Trim();
             if (text.Length > 0 && !_suppressed && !_discardOutput) _onText(text);
