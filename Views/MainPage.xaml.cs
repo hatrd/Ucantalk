@@ -1831,6 +1831,7 @@ public sealed partial class MainPage : Page
             VoskModelPath = VoskModelPathBox.Text.Trim(),
             SherpaModelPath = NormalizeSherpaModelPathForSave(SherpaModelPathBox.Text),
             SenseVoiceModelPath = SenseVoiceModelPathBox.Text.Trim(),
+            SenseVoiceSensitivity = GetComboTagValue(SenseVoiceSensitivityCombo, "auto"),
             SherpaProvider = GetComboValue(SherpaProviderCombo, "cpu"),
             SherpaNumThreads = _config.SpeechInput.SherpaNumThreads,
             SherpaDecodingMethod = _config.SpeechInput.SherpaDecodingMethod,
@@ -2762,6 +2763,7 @@ public sealed partial class MainPage : Page
         VoskModelPathBox.Text = _config.SpeechInput.VoskModelPath;
         SherpaModelPathBox.Text = GetDisplaySherpaModelPath();
         SenseVoiceModelPathBox.Text = _config.SpeechInput.SenseVoiceModelPath;
+        SetComboTagValue(SenseVoiceSensitivityCombo, _config.SpeechInput.SenseVoiceSensitivity, "auto");
         if (_config.SpeechInput.Engine == "SenseVoice-Small") RefreshSenseVoiceStatus();
         SetComboValue(SherpaProviderCombo, _config.SpeechInput.SherpaProvider, "cpu");
         _isUpdatingAutoSendSwitch = true;
@@ -2851,6 +2853,7 @@ public sealed partial class MainPage : Page
         _config.SpeechInput.VoskModelPath = VoskModelPathBox.Text.Trim();
         _config.SpeechInput.SherpaModelPath = NormalizeSherpaModelPathForSave(SherpaModelPathBox.Text);
         _config.SpeechInput.SenseVoiceModelPath = SenseVoiceModelPathBox.Text.Trim();
+        _config.SpeechInput.SenseVoiceSensitivity = GetComboTagValue(SenseVoiceSensitivityCombo, "auto");
         _config.SpeechInput.SherpaProvider = GetComboValue(SherpaProviderCombo, "cpu");
         _config.SpeechInput.AutoSend = AutoSendSwitch.IsOn;
         _config.SpeechInput.CueEnabled = SpeechCueSwitch.IsOn;

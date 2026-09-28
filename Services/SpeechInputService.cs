@@ -61,6 +61,7 @@ public sealed class SpeechInputService : IDisposable
             VoskModelPath = config.VoskModelPath,
             SherpaModelPath = config.SherpaModelPath,
             SenseVoiceModelPath = config.SenseVoiceModelPath,
+            SenseVoiceSensitivity = config.SenseVoiceSensitivity,
             SherpaProvider = config.SherpaProvider,
             SherpaNumThreads = config.SherpaNumThreads,
             SherpaDecodingMethod = config.SherpaDecodingMethod,
@@ -106,7 +107,7 @@ public sealed class SpeechInputService : IDisposable
             {
                 if (IsRunning) throw new InvalidOperationException("语音输入已经运行。");
                 session = new SenseVoiceSession(ResolveWaveInputDeviceNumber(config.MicrophoneDeviceId),
-                    files.Model, files.Tokens, files.Vad,
+                    files.Model, files.Tokens, files.Vad, config.SenseVoiceSensitivity,
                     text => TextRecognized?.Invoke(this, text));
                 _senseVoiceSession = session;
             }

@@ -692,6 +692,10 @@
                                         <x:String>cuda</x:String>
                                     </ComboBox>
                                     <StackPanel x:Name="SenseVoiceModelRow" Spacing="8" Visibility="Collapsed">
+                                        <ComboBox x:Name="SenseVoiceSensitivityCombo" Header="SenseVoice 噪声过滤（下次启动识别时生效）">
+                                            <ComboBoxItem Tag="auto" Content="自动（推荐，随背景噪声调整）"/>
+                                            <ComboBoxItem Tag="strict" Content="更严格（仍有误识别时使用）"/>
+                                        </ComboBox>
                                         <Grid ColumnSpacing="10">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>

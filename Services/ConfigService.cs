@@ -150,6 +150,8 @@ public sealed class ConfigService
         config.SpeechInput.VoskModelPath = (config.SpeechInput.VoskModelPath ?? string.Empty).Trim();
         config.SpeechInput.SherpaModelPath = (config.SpeechInput.SherpaModelPath ?? string.Empty).Trim();
         config.SpeechInput.SenseVoiceModelPath = (config.SpeechInput.SenseVoiceModelPath ?? string.Empty).Trim();
+        config.SpeechInput.SenseVoiceSensitivity = string.Equals(config.SpeechInput.SenseVoiceSensitivity, "strict", StringComparison.OrdinalIgnoreCase)
+            ? "strict" : "auto";
         config.SpeechInput.SherpaProvider = NormalizeSherpaProvider(config.SpeechInput.SherpaProvider);
         config.SpeechInput.SherpaNumThreads = Math.Clamp(config.SpeechInput.SherpaNumThreads, 1, 16);
         config.SpeechInput.SherpaDecodingMethod = NormalizeSherpaDecoding(config.SpeechInput.SherpaDecodingMethod);

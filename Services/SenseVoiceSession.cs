@@ -21,13 +21,15 @@ internal sealed class SenseVoiceSession
     private readonly string _modelPath;
     private readonly string _tokensPath;
     private readonly string _vadPath;
+    private readonly string _sensitivity;
 
-    public SenseVoiceSession(int deviceNumber, string modelPath, string tokensPath, string vadPath, Action<string> onText)
+    public SenseVoiceSession(int deviceNumber, string modelPath, string tokensPath, string vadPath, string sensitivity, Action<string> onText)
     {
         _onText = onText;
         _modelPath = modelPath;
         _tokensPath = tokensPath;
         _vadPath = vadPath;
+        _sensitivity = sensitivity;
         _capture = new WaveInEvent { DeviceNumber = deviceNumber, WaveFormat = new WaveFormat(16000, 16, 1), BufferMilliseconds = 80 };
         _capture.DataAvailable += OnAudio;
         _capture.RecordingStopped += (_, e) =>
@@ -94,10 +96,13 @@ internal sealed class SenseVoiceSession
             var vadConfig = new VadModelConfig();
             vadConfig.SampleRate = 16000;
             vadConfig.SileroVad.Model = _vadPath;
+            var strict = string.Equals(_sensitivity, "strict", StringComparison.OrdinalIgnoreCase);
+            vadConfig.SileroVad.Threshold = strict ? 0.8f : 0.7f;
             vadConfig.SileroVad.MinSilenceDuration = 0.6f;
-            vadConfig.SileroVad.MinSpeechDuration = 0.2f;
+            vadConfig.SileroVad.MinSpeechDuration = strict ? 0.45f : 0.35f;
             vadConfig.SileroVad.MaxSpeechDuration = 20;
             using var vad = new VoiceActivityDetector(vadConfig, 60);
+            var gate = new SenseVoiceSegmentGate(_sensitivity);
             _ready.TrySetResult();
             // Silero accepts fixed 512-sample windows; retain the remainder between callbacks.
             var pending = new List<float>();
@@ -108,9 +113,11 @@ internal sealed class SenseVoiceSession
                 var consumed = 0;
                 while (pending.Count - consumed >= 512)
                 {
-                    vad.AcceptWaveform(pending.GetRange(consumed, 512).ToArray());
+                    var frame = pending.GetRange(consumed, 512).ToArray();
+                    vad.AcceptWaveform(frame);
+                    if (!vad.IsSpeechDetected()) gate.ObserveBackground(frame);
                     consumed += 512;
-                    DecodeSegments(vad, recognizer);
+                    DecodeSegments(vad, recognizer, gate);
                 }
                 pending.RemoveRange(0, consumed);
             }
@@ -119,9 +126,10 @@ internal sealed class SenseVoiceSession
                 var tail = new float[512];
                 pending.CopyTo(tail);
                 vad.AcceptWaveform(tail);
+                if (!vad.IsSpeechDetected()) gate.ObserveBackground(tail);
             }
             vad.Flush();
-            DecodeSegments(vad, recognizer);
+            DecodeSegments(vad, recognizer, gate);
         }
         catch (Exception ex)
         {
@@ -131,13 +139,16 @@ internal sealed class SenseVoiceSession
         }
     }
 
-    private void DecodeSegments(VoiceActivityDetector vad, OfflineRecognizer recognizer)
+    private void DecodeSegments(VoiceActivityDetector vad, OfflineRecognizer recognizer, SenseVoiceSegmentGate gate)
     {
         while (!vad.IsEmpty())
         {
-            using var stream = recognizer.CreateStream();
-            stream.AcceptWaveform(16000, vad.Front().Samples);
+            var samples = vad.Front().Samples;
             vad.Pop();
+            if (!gate.ShouldDecode(samples)) continue;
+
+            using var stream = recognizer.CreateStream();
+            stream.AcceptWaveform(16000, samples);
             recognizer.Decode(stream);
             var text = Regex.Replace(stream.Result.Text, @"<\|[^|]*\|>", "").Trim();
             if (text.Length > 0 && !_suppressed && !_discardOutput) _onText(text);
